@@ -240,7 +240,7 @@ class oidcclient {
 
         $graphdataurl = implode('/',array(
             trim($this->studentdatauri, '/'),
-            $idtoken->claim('upn'))
+            'me')
         ).'?api-version=1.6';
         $this->httpclient->setHeader(array(
             "Authorization: Bearer $accesstoken"
