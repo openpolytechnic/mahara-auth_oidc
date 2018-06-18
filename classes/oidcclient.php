@@ -31,6 +31,12 @@ class oidcclient {
     /** @var array Array of endpoints. */
     protected $endpoints = array();
 
+    /** @var string The student data URI. */
+    protected $studentdatauri;
+
+    /** @var string The student upn key. */
+    public $upnkey;
+
     /**
      * Constructor.
      *
@@ -47,11 +53,13 @@ class oidcclient {
      * @param string $secret The registered client secret.
      * @param string $redirecturi The registered client redirect URI.
      */
-    public function setcreds($id, $secret, $redirecturi, $resource) {
+    public function setcreds($id, $secret, $redirecturi, $resource, $studentdataurl = null, $upnkey = 'upn') {
         $this->clientid = $id;
         $this->clientsecret = $secret;
         $this->redirecturi = $redirecturi;
         $this->resource = (!empty($resource)) ? $resource : 'https://graph.windows.net';
+        $this->studentdatauri = $studentdataurl;
+        $this->upnkey = $upnkey;
     }
 
     /**
@@ -118,7 +126,7 @@ class oidcclient {
      * @param array $stateparams Additional state params.
      * @return array Array of request parameters.
      */
-    protected function getauthrequestparams($promptlogin = false, array $stateparams = array()) {
+    protected function getauthrequestparams($promptlogin = false, array $stateparams = array(), $response_url = null) {
         $nonce = 'N'.uniqid();
         $params = array(
             'response_type' => 'code',
@@ -131,6 +139,9 @@ class oidcclient {
         );
         if ($promptlogin === true) {
             $params['prompt'] = 'login';
+        }
+        if ($response_url) {
+            $params['redirect_uri'] = $response_url;
         }
         return $params;
     }
@@ -160,7 +171,7 @@ class oidcclient {
      * @param bool $promptlogin Whether to prompt the OP for a login.
      * @param array $stateparams Additional state params.
      */
-    public function authrequest($promptlogin = false, array $stateparams = array()) {
+    public function authrequest($promptlogin = false, array $stateparams = array(), $respone_url = null) {
         if (empty($this->clientid)) {
             throw new \AuthInstanceException(get_string('erroroidcclientnocreds', 'auth.oidc'));
         }
@@ -168,7 +179,7 @@ class oidcclient {
         if (empty($this->endpoints['auth'])) {
             throw new \AuthInstanceException(get_string('erroroidcclientnoauthendpoint', 'auth.oidc'));
         }
-        $params = $this->getauthrequestparams($promptlogin, $stateparams);
+        $params = $this->getauthrequestparams($promptlogin, $stateparams, $respone_url);
         $redirecturl = $this->endpoints['auth'];
         $querystring = http_build_query($params);
         if (strpos($redirecturl, '?') !== false) {
@@ -186,7 +197,7 @@ class oidcclient {
      * @param string $code An authorization code.
      * @return array Received parameters.
      */
-    public function tokenrequest($code) {
+    public function tokenrequest($code, $respone_url = null) {
         if (empty($this->endpoints['token'])) {
             throw new \AuthInstanceException(get_string('erroroidcclientnotokenendpoint', 'auth.oidc'));
         }
@@ -196,6 +207,7 @@ class oidcclient {
             'client_secret' => $this->clientsecret,
             'grant_type' => 'authorization_code',
             'code' => $code,
+            'redirect_uri' => $respone_url,
         );
 
         try {
@@ -205,5 +217,73 @@ class oidcclient {
         catch (\Exception $e) {
             return $e->getMessage();
         }
+    }
+
+    /**
+     * Exchange an authorization code for an access token.
+     *
+     * @param string $code An authorization code.
+     * @return array Received parameters.
+     */
+    public function studentDatarequest($accesstoken, $idtoken) {
+        $graph_resource = $this->get_resource();
+
+        if(!$graph_resource
+            || !preg_match('/graph\.windows\.net/i', $graph_resource)
+            ||  empty($this->studentdatauri)) {
+            throw new \AuthInstanceException(get_string('erroroidcclientnotokenendpoint', 'auth.oidc'));
+        }
+
+        if (!isset($idtoken)) {
+            throw new \AuthInstanceException(get_string('erroroidcclientnotokenendpoint', 'auth.oidc'));
+        }
+
+        $graphdataurl = implode('/',array(
+            trim($this->studentdatauri, '/'),
+            $idtoken->claim('upn'))
+        ).'?api-version=1.6';
+        $this->httpclient->setHeader(array(
+            "Authorization: Bearer $accesstoken"
+        ));
+
+        try {
+            $returned = $this->httpclient->get($graphdataurl);
+            return @json_decode($returned, true);
+        }
+        catch (\Exception $e) {
+            return $e->getMessage();
+        }
+    }
+
+    /**
+     * Get UPN from the OpenID claims.
+     *
+     * @param string $idtoken An id token claims.
+     * @return string UPN based on the configuration.
+     */
+    public function get_upn($idtoken) {
+        if (!$idtoken) {
+            return null;
+        }
+        foreach ($idtoken->get_claims() as $key => $value) {
+            if(is_string($value) || is_numeric($value)) {
+                $searchParts[] = "[$key]";
+                $replaceParts[] = $value;
+            }
+        }
+        $upn = str_ireplace($searchParts, $replaceParts, $this->upnkey);
+        if (preg_match('/\[/', $upn)) {
+            return null;
+        }
+        return $upn;
+    }
+
+    /**
+     * Get sign out endpoint from config.
+     *
+     * @return string sign out endpoint.
+     */
+    public function signout_endpoint() {
+        return $this->get_endpoint("logout");
     }
 }

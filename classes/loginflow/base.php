@@ -34,6 +34,9 @@ class base {
             'resource' => '',
             'authendpoint' => '',
             'tokenendpoint' => '',
+            'logoutendpoint' => '',
+            'studentdataurl' => '',
+            'upnkey' => '',
         );
         foreach ($storedconfig as $key => $value) {
             $saved = get_config_plugin('auth', 'oidc', $key);
@@ -82,11 +85,16 @@ class base {
         $clientsecret = (isset($this->config->clientsecret)) ? $this->config->clientsecret : null;
         $redirecturi = $this->config->redirecturi;
         $resource = (isset($this->config->oidcresource)) ? $this->config->oidcresource : null;
+        $upnkey = (!empty($this->config->upnkey)) ? $this->config->upnkey : 'upn';
 
         $client = new \auth_oidc\oidcclient($this->httpclient);
-        $client->setcreds($clientid, $clientsecret, $redirecturi, $resource);
+        $client->setcreds($clientid, $clientsecret, $redirecturi, $resource, $this->config->studentdataurl, $upnkey);
 
-        $client->setendpoints(array('auth' => $this->config->authendpoint, 'token' => $this->config->tokenendpoint));
+        $client->setendpoints(array(
+            'auth' => $this->config->authendpoint,
+            'token' => $this->config->tokenendpoint,
+            'logout' => $this->config->logoutendpoint
+        ));
         return $client;
     }
 

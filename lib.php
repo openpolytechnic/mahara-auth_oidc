@@ -10,11 +10,15 @@
 
 defined('INTERNAL') || die();
 require_once(get_config('docroot').'auth/lib.php');
+require_once(__DIR__.'/autoload.php');
 
 /**
  * Authenticates users with OpenID Connect.
  */
 class AuthOidc extends Auth {
+
+    public $client = null;
+
     /**
      * Constructor.
      *
@@ -70,16 +74,17 @@ class AuthOidc extends Auth {
 
         $username = $oidcuniqid;
         $email = $idtoken->claim('email');
+        if(!$email) {
+            $email = $idtoken->claim('upn');
+        }
         $firstname = $idtoken->claim('given_name');
         $lastname = $idtoken->claim('family_name');
-
         // Office 365 uses "upn".
-        $upn = $idtoken->claim('upn');
+        $upn = $this->client->get_upn($idtoken);
         if (!empty($upn)) {
             $username = $upn;
-            $email = $upn;
+            //$email = $upn;
         }
-
         $create = false;
 
         try {
@@ -132,6 +137,26 @@ class AuthOidc extends Auth {
         return true;
     }
 
+    /**
+     * Overrides the default logout mechanism to do singout from Azure AD
+     */
+    public function logout() {
+        global $CFG, $USER, $SESSION;
+
+        $access_token = $SESSION->get('authaccesstoken');
+        $auth = new \auth_oidc\loginflow\authcode();
+
+        // logout of mahara
+        $USER->logout();
+
+        // tidy up the session for retries
+        $SESSION->set('authaccesstoken', null);
+
+        // redirect for logout with Azure AD
+        $auth->sign_out($access_token);
+    }
+
+
 }
 
 /**
@@ -167,8 +192,11 @@ class PluginAuthOidc extends PluginAuth {
             'clientsecret' => '',
             'authendpoint' => get_string('settings_authendpoint_default', 'auth.oidc'),
             'tokenendpoint' => get_string('settings_tokenendpoint_default', 'auth.oidc'),
+            'logoutendpoint' => get_string('settings_logoutendpoint_default', 'auth.oidc'),
             'resource' => get_string('settings_resource_default', 'auth.oidc'),
             'autocreateusers' => 0,
+            'studentdataurl' => '',
+            'upnkey' => get_string('settings_upnkey_default', 'auth.oidc'),
         );
         $curconfig = array();
         foreach ($configparams as $key => $default) {
@@ -228,6 +256,16 @@ class PluginAuthOidc extends PluginAuth {
                     'help'  => false,
                     'defaultvalue' => $curconfig['tokenendpoint'],
                 ),
+                'logoutendpoint' => array(
+                    'type'  => 'text',
+                    'title' => get_string('settings_logoutendpoint', 'auth.oidc'),
+                    'size' => 50,
+                    'rules' => array(
+                        'required' => true,
+                    ),
+                    'help'  => false,
+                    'defaultvalue' => $curconfig['logoutendpoint'],
+                ),
                 'resource' => array(
                     'type'  => 'text',
                     'title' => get_string('settings_resource', 'auth.oidc'),
@@ -243,6 +281,26 @@ class PluginAuthOidc extends PluginAuth {
                     'title' => get_string('settings_autocreateusers', 'auth.oidc'),
                     'defaultvalue' => $curconfig['autocreateusers'],
                     'help' => true,
+                ),
+                'studentdataurl' => array(
+                    'type'  => 'text',
+                    'title' => get_string('settings_studentdataurl', 'auth.oidc'),
+                    'size' => 50,
+                    'rules' => array(
+                        'required' => false,
+                    ),
+                    'help'  => false,
+                    'defaultvalue' => $curconfig['studentdataurl'],
+                ),
+                'upnkey' => array(
+                    'type'  => 'text',
+                    'title' => get_string('settings_upnkey', 'auth.oidc'),
+                    'size' => 50,
+                    'rules' => array(
+                        'required' => true,
+                    ),
+                    'help'  => false,
+                    'defaultvalue' => $curconfig['upnkey'],
                 ),
             ),
             'renderer' => 'div',
@@ -385,17 +443,32 @@ class PluginAuthOidc extends PluginAuth {
     /**
      * Add elements to the login form.
      *
-     * This adds the "OpenID Connect" button to the login form.
+     * This adds the "OpenID Connect" button to the login form and hides the existing login form.
      *
      * @return array Array of new elements.
      */
     public static function login_form_elements() {
+        $hideloginform = '<style>#login_login_container{display: none;} #login_login_extra_container strong {display: none;}</style>';
+        if (isset($_REQUEST["showlogin"]) && $_REQUEST["showlogin"]) {
+            $hideloginform = '';
+        }
         return array(
             'loginoidc' => array(
-                'value' => '<div class="login-externallink">'
+                'value' => $hideloginform
+                    .'<div class="login-externallink">'
+                            .'<p>'.get_string('login_description', 'auth.oidc').'</p>'
                             .'<a class="btn btn-primary btn-xs" href="'.get_config('wwwroot').'auth/oidc/redirect.php">'
                             .get_string('login', 'auth.oidc').'</a></div>'
             ),
         );
     }
+
+    /**
+     * Can be overridden by plugins that inject the things they need
+     * in the login form and don't need the standard elements.
+     */
+    public static function need_basic_login_form() {
+        return false;
+    }
+
 }

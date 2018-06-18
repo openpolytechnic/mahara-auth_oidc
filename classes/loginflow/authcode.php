@@ -23,6 +23,7 @@ class authcode extends \auth_oidc\loginflow\base {
      * @return mixed Determined by loginflow.
      */
     public function handleredirect() {
+        global $CFG;
         $state = param_variable('state', null);
         $promptlogin = (bool)param_variable('promptlogin', 0);
         if (!empty($state)) {
@@ -31,7 +32,10 @@ class authcode extends \auth_oidc\loginflow\base {
         }
         else {
             // Initial login request.
-            $this->initiateauthrequest($promptlogin, array('forceflow' => 'authcode'));
+            $this->initiateauthrequest(
+                $promptlogin,
+                array('forceflow' => 'authcode'),
+                trim($CFG->wwwroot, '/').'/auth/oidc/redirect.php');
         }
     }
 
@@ -41,9 +45,9 @@ class authcode extends \auth_oidc\loginflow\base {
      * @param bool $promptlogin Whether to prompt OP for a login.
      * @param array $stateparams Additional state parameters.
      */
-    public function initiateauthrequest($promptlogin = false, array $stateparams = array()) {
+    public function initiateauthrequest($promptlogin = false, array $stateparams = array(), $respone_url = null) {
         $client = $this->get_oidcclient();
-        $client->authrequest($promptlogin, $stateparams);
+        $client->authrequest($promptlogin, $stateparams, $respone_url);
     }
 
     /**
@@ -126,19 +130,27 @@ class authcode extends \auth_oidc\loginflow\base {
 
         // Get token from auth code.
         $client = $this->get_oidcclient();
-        $tokenparams = $client->tokenrequest($authparams['code']);
+        $tokenparams = $client->tokenrequest($authparams['code'],
+            trim($CFG->wwwroot, '/').'/auth/oidc/redirect.php');
+        //$tokenparams = $client->tokenrequest($authparams['code']);
         if (!isset($tokenparams['id_token'])) {
             throw new \AuthInstanceException(get_string('errorauthnoidtoken', 'auth.oidc'));
         }
 
         // Decode and verify idtoken.
         list($oidcuniqid, $idtoken) = $this->process_idtoken($tokenparams['id_token'], $orignonce);
-
+        $upn = $client->get_upn($idtoken);
+        if(!isset($upn)) {
+            $studentData = $client->studentDatarequest($tokenparams['access_token'], $idtoken);
+            $idtoken->set_claims($studentData);
+        }
         require_once($CFG->docroot.'/auth/lib.php');
         $SESSION = \Session::singleton();
         $USER = new \LiveUser();
         $THEME = new \Theme($USER);
 
+        //Set Access Token
+        $SESSION->set('authaccesstoken', $tokenparams['access_token']);
         $instanceid = $this->detect_auth_instance($idtoken);
 
         // Can't continue if we didn't find an auth instance.
@@ -147,6 +159,7 @@ class authcode extends \auth_oidc\loginflow\base {
         }
 
         $auth = new \AuthOidc($instanceid);
+        $auth->client = $client;
         $can_login = $auth->request_user_authorise($oidcuniqid, $tokenparams, $idtoken);
         if ($can_login === true) {
             redirect('/');
@@ -154,7 +167,7 @@ class authcode extends \auth_oidc\loginflow\base {
         else {
             // Office 365 uses "upn".
             $oidcusername = $oidcuniqid;
-            $upn = $idtoken->claim('upn');
+            $upn = $client->get_upn($idtoken);
             if (!empty($upn)) {
                 $oidcusername = $upn;
             }
@@ -166,4 +179,36 @@ class authcode extends \auth_oidc\loginflow\base {
             redirect('/auth/oidc/link.php');
         }
     }
+
+    /**
+     * Redirect to sign out endpoint if the access token is provided.
+     *
+     */
+    public function sign_out($accesstoken, $redirect = '') {
+        global $CFG;
+        $client = $this->get_oidcclient();
+        $signout_endpoint = $client->signout_endpoint();
+        if(!empty($signout_endpoint) && isset($accesstoken) && trim($accesstoken) != '' ) {
+            $signout_params = null;
+            if (empty($redirect)) {
+                $signout_params = array(
+                    'id_token_hint' => $accesstoken,
+                    'post_logout_redirect_uri' => $CFG->wwwroot
+                );
+            } else {
+                $signout_params = array(
+                    'id_token_hint' => $accesstoken,
+                    'post_logout_redirect_uri' => $redirect);
+            }
+
+            $signout_endpoint .= (strpos($signout_endpoint, '?') === false ? '?' : '&') . http_build_query($signout_params, null, '&');
+            redirect($signout_endpoint);
+            exit();
+        }
+        else {
+            redirect();
+            exit();
+        }
+    }
+
 }

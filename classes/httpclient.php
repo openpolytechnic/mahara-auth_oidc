@@ -39,7 +39,7 @@ class httpclient implements \auth_oidc\httpclientinterface {
         }
 
         if (!empty($this->headers)) {
-            $headers = [];
+            $headers = array();
             foreach ($this->headers as $k => $v) {
                 $headers[] = $k.': '.$v;
             }

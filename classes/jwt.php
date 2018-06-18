@@ -121,4 +121,14 @@ class jwt {
     public function claim($claim) {
         return (isset($this->claims[$claim])) ? $this->claims[$claim] : null;
     }
+
+    /**
+     * Get the keys of a claims.
+     *
+     * @return mixed The keys of the claims.
+     */
+    public function get_claims() {
+        return (isset($this->claims)) ? $this->claims : array();
+    }
+
 }
