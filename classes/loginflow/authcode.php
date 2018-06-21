@@ -23,7 +23,11 @@ class authcode extends \auth_oidc\loginflow\base {
      * @return mixed Determined by loginflow.
      */
     public function handleredirect() {
-        global $CFG;
+        global $CFG, $USER;
+        if($USER->is_logged_in()) {
+            redirect('/');
+            exit();
+        }
         $state = param_variable('state', null);
         $promptlogin = (bool)param_variable('promptlogin', 0);
         if (!empty($state)) {
