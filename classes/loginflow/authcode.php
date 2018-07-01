@@ -109,7 +109,6 @@ class authcode extends \auth_oidc\loginflow\base {
      */
     protected function handleauthresponse(array $authparams) {
         global $CFG, $SESSION, $STATEADDITIONALDATA, $USER, $THEME;
-        $is_loggedin = $USER->is_logged_in();
 
         if (!isset($authparams['code'])) {
             throw new \AuthInstanceException(get_string('errorauthnoauthcode', 'auth.oidc'));
@@ -143,11 +142,13 @@ class authcode extends \auth_oidc\loginflow\base {
 
         // Decode and verify idtoken.
         list($oidcuniqid, $idtoken) = $this->process_idtoken($tokenparams['id_token'], $orignonce);
+        // Load extra student data to cliams
+        $idtoken->set_claims($client->studentDatarequest($tokenparams['id_token']));
         $upn = $client->get_upn($idtoken);
-        if(!isset($upn)) {
-            $studentData = $client->studentDatarequest($tokenparams['access_token'], $idtoken);
-            $idtoken->set_claims($studentData);
+        if(!$upn) {
+            throw new \AuthInstanceException(get_string('errorauthnousername', 'auth.oidc'));
         }
+
         require_once($CFG->docroot.'/auth/lib.php');
         $SESSION = \Session::singleton();
         $USER = new \LiveUser();

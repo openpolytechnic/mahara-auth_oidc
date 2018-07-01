@@ -71,20 +71,22 @@ class AuthOidc extends Auth {
     public function request_user_authorise($oidcuniqid, $tokenparams, $idtoken) {
         global $USER, $SESSION;
         $this->must_be_ready();
-
-        $username = $oidcuniqid;
-        $email = $idtoken->claim('email');
+        $email = $idtoken->claim('PreferredEmail');
         if(!$email) {
             $email = $idtoken->claim('upn');
         }
-        $firstname = $idtoken->claim('given_name');
-        $lastname = $idtoken->claim('family_name');
-        // Office 365 uses "upn".
+        $firstname = $idtoken->claim('FirstName');
+        $lastname = $idtoken->claim('LastName');
+        // Get the UPN for OP its student id with 's' at end.
         $upn = $this->client->get_upn($idtoken);
-        if (!empty($upn)) {
+        if ($upn && !empty($upn)) {
             $username = $upn;
-            //$email = $upn;
         }
+        else {
+            // Username was not present in claims.
+            throw new \AuthInstanceException(get_string('errorauthnousername', 'auth.oidc'));
+        }
+        $student_number = $idtoken->claim('student_number');
         $create = false;
 
         try {
@@ -92,6 +94,17 @@ class AuthOidc extends Auth {
             $user->find_by_instanceid_username($this->instanceid, $username, true);
             if ($user->get('suspendedcusr')) {
                 die_info(get_string('accountsuspended', 'mahara', strftime(get_string('strftimedaydate'), $user->get('suspendedctime')), $user->get('suspendedreason')));
+            }
+            // Update the user with latest detials
+            foreach (array(
+                "firstname" => $firstname,
+                "lastname" => $lastname,
+                "email" => $email
+                     ) as $field => $value) {
+                if ($value && !empty($value) && $user->$field != $value) {
+                    $user->$field = $value;
+                    set_profile_field($user->id, $field, $user->$field);
+                }
             }
         }
         catch (\AuthUnknownUserException $e) {
@@ -118,23 +131,61 @@ class AuthOidc extends Auth {
             $user->firstname = $firstname;
             $user->lastname = $lastname;
             $user->email = $email;
+            if ($student_number && !empty($student_number)) {
+                $user->studentid = $student_number;
+            }
             $user->authinstance = $this->instanceid;
 
             db_begin();
             $user->username = get_new_username($username);
             $user->id = create_user($user, array(), $this->institution, $this, $username);
             $userobj = $user->to_stdclass();
-            $userarray = (array)$userobj;
+
             db_commit();
 
             $user = new User;
             $user->find_by_id($userobj->id);
         }
+        self::import_user_settings($user, $idtoken);
         $user->commit();
-
         $USER->reanimate($user->id, $this->instanceid);
         $SESSION->set('authinstance', $this->instanceid);
         return true;
+    }
+
+    /**
+     * Update the student city and country
+     *
+     * * City
+     * * Country
+     *
+     * @param User $user
+     * @param stdClass $idtoken
+     */
+    private function import_user_settings($user, $idtoken) {
+        $imported = array();
+
+        // City
+        $city = $idtoken->claim('City');
+        if ($city && !empty($city)) {
+            if (get_profile_field($user->id, 'town') != $city) {
+                set_profile_field($user->id, 'town', $city);
+            }
+            $imported[] = 'town';
+        }
+
+        // Country
+        $newcountry = strtolower($idtoken->claim('Country'));
+        if ($newcountry && !empty($newcountry)) {
+            $newcountry = strtolower($newcountry);
+            $validcountries = array_keys(getoptions_country());
+            if (in_array($newcountry, $validcountries)) {
+                set_profile_field($user->id, 'country', $idtoken->claim('Country'));
+            }
+            $imported[] = 'country';
+        }
+
+        return $imported;
     }
 
     /**

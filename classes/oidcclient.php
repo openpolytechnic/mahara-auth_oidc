@@ -225,32 +225,24 @@ class oidcclient {
      * @param string $code An authorization code.
      * @return array Received parameters.
      */
-    public function studentDatarequest($accesstoken, $idtoken) {
-        $graph_resource = $this->get_resource();
-
-        if(!$graph_resource
-            || !preg_match('/graph\.windows\.net/i', $graph_resource)
-            ||  empty($this->studentdatauri)) {
-            throw new \AuthInstanceException(get_string('erroroidcclientnotokenendpoint', 'auth.oidc'));
+    public function studentDatarequest($rawidtoken) {
+        if(empty($this->studentdatauri)) {
+            throw new \AuthInstanceException(get_string('errorauthnstudentdataurl', 'auth.oidc'));
         }
 
-        if (!isset($idtoken)) {
-            throw new \AuthInstanceException(get_string('erroroidcclientnotokenendpoint', 'auth.oidc'));
+        if (!isset($rawidtoken)) {
+            throw new \AuthInstanceException(get_string('errorauthnoidtoken', 'auth.oidc'));
         }
-
-        $graphdataurl = implode('/',array(
-            trim($this->studentdatauri, '/'),
-            'me')
-        ).'?api-version=1.6';
         $this->httpclient->setHeader(array(
-            "Authorization: Bearer $accesstoken"
+            "Authorization: Bearer $rawidtoken"
         ));
 
         try {
-            $returned = $this->httpclient->get($graphdataurl);
+            $returned = $this->httpclient->get($this->studentdatauri);
             return @json_decode($returned, true);
         }
         catch (\Exception $e) {
+            print_r($e);
             return $e->getMessage();
         }
     }
