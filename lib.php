@@ -91,7 +91,15 @@ class AuthOidc extends Auth {
 
         try {
             $user = new \User;
-            $user->find_by_instanceid_username($this->instanceid, $username, true);
+            try {
+                $user->find_by_instanceid_username($this->instanceid, $username, true);
+            }
+            catch (\AuthUnknownUserException $e) {
+                // User not present in this auth instance, so pick the user from other auth instance and update
+                $user->find_by_username($username);
+                $user->authinstance = $this->instanceid;
+            }
+
             if ($user->get('suspendedcusr')) {
                 die_info(get_string('accountsuspended', 'mahara', strftime(get_string('strftimedaydate'), $user->get('suspendedctime')), $user->get('suspendedreason')));
             }
