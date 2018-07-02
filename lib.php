@@ -173,6 +173,15 @@ class AuthOidc extends Auth {
     private function import_user_settings($user, $idtoken) {
         $imported = array();
 
+        // Student Id
+        $studentid = $idtoken->claim('student_number');
+        if ($studentid && !empty($studentid)) {
+            if (get_profile_field($user->id, 'studentid') != $studentid) {
+                set_profile_field($user->id, 'studentid', $studentid);
+            }
+            $imported[] = 'studentid';
+        }
+
         // City
         $city = $idtoken->claim('City');
         if ($city && !empty($city)) {
