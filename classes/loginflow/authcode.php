@@ -143,11 +143,15 @@ class authcode extends \auth_oidc\loginflow\base {
         // Decode and verify idtoken.
         list($oidcuniqid, $idtoken) = $this->process_idtoken($tokenparams['id_token'], $orignonce);
         // Load extra student data to cliams
-        $studentData = $client->studentDatarequest($tokenparams['id_token']);
-        if($studentData && is_array($studentData)) {
-            $idtoken->set_claims($studentData);
-        }
-        $upn = $client->get_upn($idtoken);
+	    $upn = $idtoken->claim("email");
+	    if( $idtoken->claim('student_number') ) {
+		    $studentData = $client->studentDatarequest($tokenparams['id_token']);
+		    if ($studentData && is_array($studentData)) {
+			    $idtoken->set_claims($studentData);
+		    }
+		    $upn = $client->get_upn($idtoken);
+	    }
+
         if(!$upn) {
             throw new \AuthInstanceException(get_string('errorauthnousername', 'auth.oidc'));
         }
@@ -176,6 +180,9 @@ class authcode extends \auth_oidc\loginflow\base {
             // Office 365 uses "upn".
             $oidcusername = $oidcuniqid;
             $upn = $client->get_upn($idtoken);
+            if (!$upn) {
+	            $upn = $idtoken->claim("email");
+            }
             if (!empty($upn)) {
                 $oidcusername = $upn;
             }

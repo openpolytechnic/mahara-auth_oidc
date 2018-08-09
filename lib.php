@@ -71,14 +71,33 @@ class AuthOidc extends Auth {
     public function request_user_authorise($oidcuniqid, $tokenparams, $idtoken) {
         global $USER, $SESSION;
         $this->must_be_ready();
+
         $email = $idtoken->claim('PreferredEmail');
         if(!$email) {
-            $email = $idtoken->claim('upn');
+            $email = $idtoken->claim('email');
         }
+        if ($email) {
+	        $email = strtolower($email);
+        }
+
         $firstname = $idtoken->claim('FirstName');
+        if (!$firstname) {
+	        $firstname = $idtoken->claim('name');
+        }
+
         $lastname = $idtoken->claim('LastName');
-        // Get the UPN for OP its student id with 's' at end.
-        $upn = $this->client->get_upn($idtoken);
+	    if (!$lastname && $firstname
+		    && count($nameparts = explode(" ", $firstname)) > 1) {
+		    $lastname = trim(array_pop($nameparts));
+		    $firstname = trim(implode(" ", $nameparts));
+	    }
+
+	    $upn = $email;
+	    $student_number = $idtoken->claim('student_number');
+		if ($student_number) {
+			// Get the UPN for OP its student id with 's' at end.
+			$upn = $this->client->get_upn($idtoken);
+		}
         if ($upn && !empty($upn)) {
             $username = $upn;
         }
@@ -86,23 +105,38 @@ class AuthOidc extends Auth {
             // Username was not present in claims.
             throw new \AuthInstanceException(get_string('errorauthnousername', 'auth.oidc'));
         }
-        $student_number = $idtoken->claim('student_number');
         $create = false;
-
         try {
             $user = new \User;
             try {
                 $user->find_by_instanceid_username($this->instanceid, $username, true);
             }
             catch (\AuthUnknownUserException $e) {
-                // User not present in this auth instance, so pick the user from other auth instance and update
-                $user->find_by_username($username);
-                $user->authinstance = $this->instanceid;
+            	try {
+		            // User not present in this auth instance, so pick the user from other auth instance and update
+		            $user->find_by_username($username);
+		            $user->authinstance = $this->instanceid;
+	            }
+	            catch (\AuthUnknownUserException $e) {
+            		if ($student_number) {
+			            throw new AuthUnknownUserException("User with username \"$username\" is not known");
+		            }
+		            $oldusername = $this->find_username_by_email($email);
+            		if($oldusername) {
+			            $user->find_by_username($oldusername);
+			            $user->authinstance = $this->instanceid;
+			            $user->username = get_new_username($username, 200);
+		            }
+		            else {
+			            throw new AuthUnknownUserException("User with username \"$username\" is not known");
+		            }
+	            }
             }
 
             if ($user->get('suspendedcusr')) {
                 die_info(get_string('accountsuspended', 'mahara', strftime(get_string('strftimedaydate'), $user->get('suspendedctime')), $user->get('suspendedreason')));
             }
+
             // Update the user with latest detials
             foreach (array(
                 "firstname" => $firstname,
@@ -145,7 +179,7 @@ class AuthOidc extends Auth {
             $user->authinstance = $this->instanceid;
 
             db_begin();
-            $user->username = get_new_username($username);
+            $user->username = get_new_username($username, 200);
             $user->id = create_user($user, array(), $this->institution, $this, $username);
             $userobj = $user->to_stdclass();
 
@@ -159,6 +193,29 @@ class AuthOidc extends Auth {
         $USER->reanimate($user->id, $this->instanceid);
         $SESSION->set('authinstance', $this->instanceid);
         return true;
+    }
+
+    private function find_username_by_email($email) {
+    	if ($email) {
+		    $email = strtolower($email);
+
+		    $sql = 'SELECT
+                    username
+                FROM
+                    {usr}
+                WHERE
+                    LOWER(email) = ?
+                    AND username LIKE \'%t\'';
+
+		    $olduser = get_record_sql($sql, array($email));
+		    if ($olduser) {
+			    return $olduser->username;
+		    }
+	    }
+
+	    throw new AuthUnknownUserException("User with email \"$email\" is not known");
+
+	    return null;
     }
 
     /**
@@ -181,27 +238,27 @@ class AuthOidc extends Auth {
             }
             $imported[] = 'studentid';
         }
+		if ($studentid) {
+			// City
+			$city = $idtoken->claim('City');
+			if ($city && !empty($city)) {
+				if (get_profile_field($user->id, 'town') != $city) {
+					set_profile_field($user->id, 'town', $city);
+				}
+				$imported[] = 'town';
+			}
 
-        // City
-        $city = $idtoken->claim('City');
-        if ($city && !empty($city)) {
-            if (get_profile_field($user->id, 'town') != $city) {
-                set_profile_field($user->id, 'town', $city);
-            }
-            $imported[] = 'town';
-        }
-
-        // Country
-        $newcountry = strtolower($idtoken->claim('Country'));
-        if ($newcountry && !empty($newcountry)) {
-            $newcountry = strtolower($newcountry);
-            $validcountries = array_keys(getoptions_country());
-            if (in_array($newcountry, $validcountries)) {
-                set_profile_field($user->id, 'country', $idtoken->claim('Country'));
-            }
-            $imported[] = 'country';
-        }
-
+			// Country
+			$newcountry = strtolower($idtoken->claim('Country'));
+			if ($newcountry && !empty($newcountry)) {
+				$newcountry = strtolower($newcountry);
+				$validcountries = array_keys(getoptions_country());
+				if (in_array($newcountry, $validcountries)) {
+					set_profile_field($user->id, 'country', $idtoken->claim('Country'));
+				}
+				$imported[] = 'country';
+			}
+		}
         return $imported;
     }
 
